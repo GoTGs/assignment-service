@@ -1,0 +1,13 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+modules=1
+
+Name: libXML
+Version: 2.11.8
+Description: libXML library version2.
+
+Libs: "-L${libdir}" -lxml2 -lm
+Requires:  zlib liblzma
+Cflags: "-I${includedir}/libxml2" -DLIBXML_STATIC

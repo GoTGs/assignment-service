@@ -1,0 +1,9 @@
+services:
+  assignment:
+    build: .
+    command: sh -c "stdbuf -oL ./build/assignment"
+    env_file:
+      - .env
+    # command: sh -c "ls /usr/include/openssl"
+    ports:
+      - "8003:8003"
