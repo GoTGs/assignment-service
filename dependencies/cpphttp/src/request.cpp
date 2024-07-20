@@ -96,6 +96,25 @@ std::string CppHttp::Utils::GetBody(const std::string req)  {
     return req.substr(bodyStartChar + 4);
 }
 
+std::u8string CppHttp::Utils::GetU8Body(const char* buffer, size_t size) {
+	int bodyStartChar = -1;
+
+    std::string req(buffer, size);
+
+    if (req.find("\r\n\r\n") != std::string::npos) {
+        bodyStartChar = req.find("\r\n\r\n");
+    }
+    else if (req.find("\n\n") != std::string::npos) {
+		bodyStartChar = req.find("\n\n");
+	}
+
+    if (bodyStartChar == -1) {
+		return u8"";
+	}
+
+	return std::u8string(buffer + bodyStartChar, buffer + size);
+}
+
 std::string CppHttp::Utils::GetHeader(std::string const& req, std::string const& header)  {
     std::vector<std::string> split = CppHttp::Utils::Split(req, '\n');
     std::string headerLine = "";

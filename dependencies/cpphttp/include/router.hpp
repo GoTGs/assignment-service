@@ -84,16 +84,21 @@ namespace CppHttp {
 							continue;
 						}
 
+						bool foundMatch = false;
+
 						// split path by '/'
 						std::vector<std::string> pathSplit = CppHttp::Utils::Split(path, '/');
 
 						// find index of element in pathSplit that begins with '{'
-						auto it = std::find_if(pathSplit.begin(), pathSplit.end(), [](std::string& s) {
-							return s[0] == '{';
-							});
+						std::vector<std::vector<std::string>::iterator> indexes;
 
-						// if element is found
-						if (it != pathSplit.end()) {
+						for (auto it = pathSplit.begin(); it != pathSplit.end(); ++it) {
+							if ((*it)[0] == '{') {
+								indexes.push_back(it);
+							}
+						}
+						
+						for (auto it : indexes) {
 							// get index of element
 							int index = std::distance(pathSplit.begin(), it);
 
@@ -109,6 +114,9 @@ namespace CppHttp {
 							bool leftSideMatch = true;
 
 							for (int i = 0; i < index; ++i) {
+								if (pathSplit[i][0] == '{') {
+									continue;
+								}
 								if (pathSplit[i] != routeSplit[i]) {
 									leftSideMatch = false;
 									break;
@@ -119,6 +127,9 @@ namespace CppHttp {
 							bool rightSideMatch = true;
 
 							for (int i = index + 1; i < pathSplit.size(); ++i) {
+								if (pathSplit[i][0] == '{') {
+									continue;
+								}
 								if (pathSplit[i] != routeSplit[i]) {
 									rightSideMatch = false;
 									break;
@@ -138,17 +149,21 @@ namespace CppHttp {
 							// add parameter and value to request parameters map
 							req.m_info.parameters[parameterName] = parameterValue;
 
-							// invoke callback
-							try {
-								responses = pair.first.Invoke(req);
-							}
-							catch (std::exception& e) {
-								responses = { { ResponseType::INTERNAL_ERROR, e.what(), {} } };
-							}
+							foundMatch = true;
+						}
+						if (!foundMatch) {
+							continue;
+						}
 
-							for (auto& res : responses) {
-								response = res;
-							}
+						try {
+							responses = pair.first.Invoke(req);
+						}
+						catch (std::exception& e) {
+							responses = { { ResponseType::INTERNAL_ERROR, e.what(), {} } };
+						}
+
+						for (auto& res : responses) {
+							response = res;
 						}
 					}
 				}

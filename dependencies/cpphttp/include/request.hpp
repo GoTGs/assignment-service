@@ -44,6 +44,8 @@ namespace CppHttp {
 			// Extract body from request
 			std::string GetBody(const std::string req);
 
+			std::u8string GetU8Body(const char* buffer, size_t size);
+
 			// Extract header from request
 			std::string GetHeader(std::string const& req, std::string const& header);
 
@@ -78,6 +80,8 @@ namespace CppHttp {
 			std::unordered_map<std::string, std::string> parameters;
 			std::unordered_map<std::string, std::string> headers;
 			std::string body;
+			std::u8string uoriginal;
+			std::u8string ubody;
 		};
 		
 		class Request {

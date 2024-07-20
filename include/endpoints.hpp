@@ -12,6 +12,8 @@
 #include <unordered_map>
 #include <cstdlib>
 #include <variant>
+#include "formParser.hpp"
+#include "../include/azure.hpp"
 
 using returnType = std::tuple<CppHttp::Net::ResponseType, std::string, std::optional<std::vector<std::string>>>;
 using json = nlohmann::json;
@@ -98,10 +100,4 @@ namespace soci
 
 std::variant<TokenError, json> ValidateToken(std::string& token);
 
-returnType CreateClassroom(CppHttp::Net::Request req);
-
-returnType AddUserToClassroom(CppHttp::Net::Request req);
-
-returnType GetUserClassrooms(CppHttp::Net::Request req);
-
-returnType GetClassroom(CppHttp::Net::Request req);
+returnType GetAllAssignments(CppHttp::Net::Request req);

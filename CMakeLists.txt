@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.13)
 project("service")
 
 find_package(PostgreSQL REQUIRED)
-find_package(nlohmann_json REQUIRED)
 
 include_directories(${PostgreSQL_INCLUDE_DIRS})
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}/dependencies/ssl/include")
