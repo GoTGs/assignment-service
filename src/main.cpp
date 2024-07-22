@@ -16,9 +16,11 @@ int main() {
 
 	server.SetOnReceive(onReceive);
 
-	router.AddRoute("GET", "/assignment/classroom/{assignment_id}/get/all", GetAllAssignments);
+	router.AddRoute("GET", "/assignment/classroom/{classroom_id}/get/all", GetAllAssignments);
 	router.AddRoute("GET", "/assignment/{assignment_id}/get", GetAssignment);
 	router.AddRoute("POST", "/assignment/classroom/{classroom_id}/create", CreateAssignment);
+	router.AddRoute("PUT", "/assignment/{assignment_id}/edit", EditAssignment);
+	router.AddRoute("DELETE", "/assignment/{assignment_id}/delete", DeleteAssignment);
 
 	server.Listen("0.0.0.0", 8003, std::thread::hardware_concurrency());
 

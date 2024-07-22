@@ -134,3 +134,7 @@ returnType CreateAssignment(CppHttp::Net::Request req);
 returnType GetAllAssignments(CppHttp::Net::Request req);
 
 returnType GetAssignment(CppHttp::Net::Request req);
+
+returnType EditAssignment(CppHttp::Net::Request req);
+
+returnType DeleteAssignment(CppHttp::Net::Request req);

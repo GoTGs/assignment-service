@@ -49,7 +49,7 @@ returnType CreateAssignment(CppHttp::Net::Request req) {
 	}
 
 	if (user.email.empty()) {
-		return { CppHttp::Net::ResponseType::NOT_AUTHORIZED, "User is not a member of this classroom", {} };
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
 	}
 
 	std::transform(user.role.begin(), user.role.end(), user.role.begin(), ::toupper);
@@ -83,6 +83,10 @@ returnType CreateAssignment(CppHttp::Net::Request req) {
 
 	std::istringstream iss(dueDate);
 	iss >> std::get_time(&dueDateTm, "%d-%m-%Y %H:%M:%S");
+
+	if (iss.fail()) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Invalid due date format", {} };
+	}
 
 	Assignment assignment;
 	assignment.title = std::move(title);
@@ -132,7 +136,7 @@ returnType GetAllAssignments(CppHttp::Net::Request req) {
 	}
 
 	if (user.email.empty()) {
-		return { CppHttp::Net::ResponseType::NOT_AUTHORIZED, "User is not a member of this classroom", {} };
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
 	}
 
 	json response = json::array();
@@ -177,11 +181,11 @@ returnType GetAssignment(CppHttp::Net::Request req) {
 	User user;
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
-		*sql << "SELECT * FROM users id=:user_id", soci::use(id), soci::into(user);
+		*sql << "SELECT * FROM users WHERE id=:user_id", soci::use(id), soci::into(user);
 	}
 
 	if (user.email.empty()) {
-		return { CppHttp::Net::ResponseType::NOT_AUTHORIZED, "User is not a member of this classroom", {} };
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
 	}
 
 	Assignment assignment;
@@ -191,7 +195,7 @@ returnType GetAssignment(CppHttp::Net::Request req) {
 		*sql << "SELECT * FROM classroom_users WHERE classroom_id=:classroom_id AND user_id=:user_id", soci::use(assignment.classroomId), soci::use(id);
 
 		if (!sql->got_data()) {
-			return { CppHttp::Net::ResponseType::NOT_AUTHORIZED, "User is not a member of this classroom", {} };
+			return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
 		}
 	}
 
@@ -207,4 +211,165 @@ returnType GetAssignment(CppHttp::Net::Request req) {
 	};
 
 	return { CppHttp::Net::ResponseType::JSON, response.dump(4), {} };
+}
+
+returnType EditAssignment(CppHttp::Net::Request req) {
+	if (req.m_info.parameters["assignment_id"].empty()) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Missing classroom_id in path parameters", {} };
+	}
+
+	soci::session* sql = Database::GetInstance()->GetSession();
+	std::string token = req.m_info.headers["Authorization"];
+
+	auto tokenResult = ValidateToken(token);
+
+	if (std::holds_alternative<TokenError>(tokenResult)) {
+		auto error = std::get<TokenError>(tokenResult);
+		return { error.type, error.message, {} };
+	}
+
+	auto tokenJson = std::get<json>(tokenResult);
+	std::string id = tokenJson["id"];
+
+	User user;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM users WHERE id=:user_id", soci::use(id), soci::into(user);
+	}
+
+	if (user.email.empty()) {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
+	}
+
+	std::transform(user.role.begin(), user.role.end(), user.role.begin(), ::toupper);
+
+	if (user.role != "TEACHER" && user.role != "ADMIN") {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a teacher", {} };
+	}
+
+	Assignment assignment;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM assignments WHERE id=:id", soci::use(req.m_info.parameters["assignment_id"]), soci::into(assignment);
+
+		if (assignment.title.empty()) {
+			return { CppHttp::Net::ResponseType::NOT_FOUND, "Assignment not found", {} };
+		}
+
+		*sql << "SELECT * FROM classroom_users WHERE classroom_id=:classroom_id AND user_id=:user_id", soci::use(assignment.classroomId), soci::use(id);
+
+		if (!sql->got_data()) {
+			return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
+		}
+	}
+
+	json body;
+	try {
+		body = json::parse(req.m_info.body);
+	}
+	catch (json::parse_error& e) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Invalid JSON", {} };
+	}
+
+	std::string title = body["title"];
+	std::string description = body["description"];
+	std::string dueDate = body["due_date"];
+
+	if (!title.empty()) {
+		if (title.size() > 120) {
+			return { CppHttp::Net::ResponseType::BAD_REQUEST, "Title is too long", {} };
+		}
+		assignment.title = std::move(title);
+	}
+	if (!description.empty()) {
+		if (description.size() > 2048) {
+			return { CppHttp::Net::ResponseType::BAD_REQUEST, "Description is too long", {} };
+		}
+		assignment.description = std::move(description);
+	}
+	if (!dueDate.empty()) {
+		std::tm dueDateTm = {};
+
+		std::istringstream iss(dueDate);
+		iss >> std::get_time(&dueDateTm, "%d-%m-%Y %H:%M:%S");
+
+		if (iss.fail()) {
+			return { CppHttp::Net::ResponseType::BAD_REQUEST, "Invalid due date format", {} };
+		}
+
+		assignment.dueDate = std::move(dueDateTm);
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "UPDATE assignments SET title=:title, description=:description, due_date=:due_date WHERE id=:id RETURNING *", soci::use(assignment.title), soci::use(assignment.description), soci::use(assignment.dueDate), soci::use(req.m_info.parameters["assignment_id"]), soci::into(assignment);
+	}
+
+	json response = {
+		{ "id", assignment.id },
+		{ "title", assignment.title },
+		{ "description", assignment.description },
+		{ "dueDate", dueDate },
+		{ "classroomId", assignment.classroomId }
+	};
+
+	return { CppHttp::Net::ResponseType::JSON, response.dump(4), {} };
+}
+
+returnType DeleteAssignment(CppHttp::Net::Request req) {
+	if (req.m_info.parameters["assignment_id"].empty()) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Missing classroom_id in path parameters", {} };
+	}
+
+	soci::session* sql = Database::GetInstance()->GetSession();
+	std::string token = req.m_info.headers["Authorization"];
+
+	auto tokenResult = ValidateToken(token);
+
+	if (std::holds_alternative<TokenError>(tokenResult)) {
+		auto error = std::get<TokenError>(tokenResult);
+		return { error.type, error.message, {} };
+	}
+
+	auto tokenJson = std::get<json>(tokenResult);
+	std::string id = tokenJson["id"];
+
+	User user;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM users WHERE id=:user_id", soci::use(id), soci::into(user);
+	}
+
+	if (user.email.empty()) {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
+	}
+
+	std::transform(user.role.begin(), user.role.end(), user.role.begin(), ::toupper);
+
+	if (user.role != "TEACHER" && user.role != "ADMIN") {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a teacher", {} };
+	}
+
+	Assignment assignment;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM assignments WHERE id=:id", soci::use(req.m_info.parameters["assignment_id"]), soci::into(assignment);
+
+		if (assignment.title.empty()) {
+			return { CppHttp::Net::ResponseType::NOT_FOUND, "Assignment not found", {} };
+		}
+
+		*sql << "SELECT * FROM classroom_users WHERE classroom_id=:classroom_id AND user_id=:user_id", soci::use(assignment.classroomId), soci::use(id);
+
+		if (!sql->got_data()) {
+			return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
+		}
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "DELETE FROM assignments WHERE id=:id", soci::use(req.m_info.parameters["assignment_id"]);
+	}
+
+	return { CppHttp::Net::ResponseType::OK, "Assignment deleted", {} };
 }
