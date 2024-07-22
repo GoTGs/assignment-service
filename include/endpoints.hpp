@@ -4,6 +4,7 @@
 #include "database.hpp"
 #include "jwt-cpp/traits/nlohmann-json/traits.h"
 #include <iostream>
+#include <iomanip>
 #include <string>
 #include <tuple>
 #include <optional>
@@ -12,6 +13,7 @@
 #include <unordered_map>
 #include <cstdlib>
 #include <variant>
+#include <cuchar>
 #include "formParser.hpp"
 #include "../include/azure.hpp"
 
@@ -34,10 +36,12 @@ struct Classroom {
     int ownerId;
 };
 
-struct ClassroomUser {
+struct Assignment {
     int id;
+    std::string title;
+    std::string description;
+    std::tm dueDate;
     int classroomId;
-    int userId;
 };
 
 struct TokenError {
@@ -96,8 +100,37 @@ namespace soci
 			ind = i_ok;
 		}
 	};
+
+    template<>
+    struct type_conversion<Assignment>
+    {
+        typedef values base_type;
+
+        static void from_base(values const& v, indicator /* ind */, Assignment& a)
+        {
+            a.id = v.get<int>("id", 0);
+            a.title = v.get<std::string>("title");
+            a.description = v.get<std::string>("description");
+            a.dueDate = v.get<std::tm>("due_date");
+            a.classroomId = v.get<int>("classroom_id");
+        }
+
+        static void to_base(const Assignment& a, values& v, indicator& ind)
+        {
+            v.set("id", a.id);
+            v.set("title", a.title);
+            v.set("description", a.description);
+            v.set("due_date", a.dueDate);
+            v.set("classroom_id", a.classroomId);
+            ind = i_ok;
+        }
+    };
 }
 
 std::variant<TokenError, json> ValidateToken(std::string& token);
 
+returnType CreateAssignment(CppHttp::Net::Request req);
+
 returnType GetAllAssignments(CppHttp::Net::Request req);
+
+returnType GetAssignment(CppHttp::Net::Request req);

@@ -12,8 +12,8 @@ FormParser::FormParser(CppHttp::Net::Request req) {
 	}
 }
 
-std::unordered_map<std::u8string, std::u8string> FormParser::Parse() {
-	std::unordered_map<std::u8string, std::u8string> fields;
+std::vector<std::unordered_map<std::u8string, std::u8string>> FormParser::Parse() {
+	std::vector<std::unordered_map<std::u8string, std::u8string>> fieldsV;
 
 	std::u8string delimiter = u8"--" + this->delimiter;
 	std::u8string endDelimiter = u8"--" + this->delimiter + u8"--";
@@ -28,6 +28,7 @@ std::unordered_map<std::u8string, std::u8string> FormParser::Parse() {
 		if (endPos == std::string::npos) {
 			break;
 		}
+		std::unordered_map<std::u8string, std::u8string> fields;
 
 		std::u8string field = this->body.substr(pos, endPos - pos);
 
@@ -40,8 +41,20 @@ std::unordered_map<std::u8string, std::u8string> FormParser::Parse() {
 
 		std::u8string value = field.substr(valuePos, field.length() - valuePos - 2);
 
-		fields[name] = value;
+		fields[u8"name"] = name;
+		fields[u8"value"] = value;
+
+		size_t filenamePos = field.find(u8"filename=\"") + 10;
+		size_t filenameEndPos = field.find(u8"\"", filenamePos);
+
+		if (filenamePos != std::string::npos) {
+			std::u8string filename = field.substr(filenamePos, filenameEndPos - filenamePos);
+
+			fields[u8"filename"] = filename;
+		}
+
+		fieldsV.push_back(fields);
 	}
 
-	return fields;
+	return fieldsV;
 }

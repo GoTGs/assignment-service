@@ -4,13 +4,17 @@
 #include <soci/postgresql/soci-postgresql.h>
 #include <cstdlib>
 #include <string>
+#include <mutex>
+#include <iostream>
 
 using namespace soci;
 
 class Database {
 private:
 	Database() {
-		sql.open(postgresql, "dbname=" + (std::string)std::getenv("PG_DB") + " user=" + (std::string)std::getenv("PG_USER") + " password=" + (std::string)std::getenv("PG_PASS") + " host=" + (std::string)std::getenv("PG_HOST") + " port=" + (std::string)std::getenv("PG_PORT") + " sslmode=require");
+		dbMutex.lock();
+		sql.open(postgresql, "dbname=" + (std::string)std::getenv("PG_DB") + " user=" + (std::string)std::getenv("PG_USER") + " password=" + (std::string)std::getenv("PG_PASS") + " host=" + (std::string)std::getenv("PG_HOST") + " port=" + (std::string)std::getenv("PG_PORT") + " sslmode=require");	
+		dbMutex.unlock();
 	}
 
 	static Database* databaseInstance;
@@ -35,4 +39,6 @@ public:
 		delete databaseInstance;
 		databaseInstance = nullptr;
 	}
+
+	static std::mutex dbMutex;
 };

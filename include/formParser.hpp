@@ -13,5 +13,5 @@ private:
 public:
 	FormParser(CppHttp::Net::Request req);
 
-	std::unordered_map<std::u8string, std::u8string> Parse();
+	std::vector<std::unordered_map<std::u8string, std::u8string>> Parse();
 };
