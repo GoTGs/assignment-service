@@ -18,7 +18,7 @@ int main() {
 
 	router.AddRoute("GET", "/assignment/classroom/{assignment_id}/get/all", GetAllAssignments);
 	router.AddRoute("GET", "/assignment/{assignment_id}/get", GetAssignment);
-
+	router.AddRoute("POST", "/assignment/create", CreateAssignment);
 
 	server.Listen("0.0.0.0", 8003, std::thread::hardware_concurrency());
 
