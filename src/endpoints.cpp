@@ -8,7 +8,15 @@ std::variant<TokenError, json> ValidateToken(std::string& token) {
 		return TokenError{ CppHttp::Net::ResponseType::NOT_AUTHORIZED, "Missing token" };
 	}
 
-	jwt::verifier<jwt::default_clock, jwt::traits::nlohmann_json> verifier = jwt::verify<jwt::traits::nlohmann_json>().allow_algorithm(jwt::algorithm::rs512{ "", std::getenv("RSASECRET"), "", ""}).with_issuer("auth0");
+	std::string rsaSecret = std::getenv("RSASECRET");
+
+	size_t pos = 0;
+
+	while ((pos = rsaSecret.find("\\n", pos)) != std::string::npos) {
+		rsaSecret.replace(pos, 2, "\n");
+	}
+
+	jwt::verifier<jwt::default_clock, jwt::traits::nlohmann_json> verifier = jwt::verify<jwt::traits::nlohmann_json>().allow_algorithm(jwt::algorithm::rs512{ "", rsaSecret, "", "" }).with_issuer("auth0");
 	auto decodedToken = jwt::decode<jwt::traits::nlohmann_json>(token);
 
 	std::error_code ec;
@@ -16,7 +24,7 @@ std::variant<TokenError, json> ValidateToken(std::string& token) {
 
 	if (ec) {
 		std::osyncstream(std::cout) << "\033[1;31m[-] Error: " << ec.message() << "\033[0m\n";
-		return TokenError{ CppHttp::Net::ResponseType::INTERNAL_ERROR, ec.message() };
+		return TokenError{ CppHttp::Net::ResponseType::NOT_AUTHORIZED, ec.message() };
 	}
 
 	auto tokenJson = decodedToken.get_payload_json();
