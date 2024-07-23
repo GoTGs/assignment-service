@@ -20,6 +20,7 @@
 using returnType = std::tuple<CppHttp::Net::ResponseType, std::string, std::optional<std::vector<std::string>>>;
 using json = nlohmann::json;
 
+#pragma region Data Structures
 struct User {
 	int id;
 	std::string email;
@@ -42,6 +43,19 @@ struct Assignment {
     std::string description;
     std::tm dueDate;
     int classroomId;
+};
+
+struct Submission {
+    int id;
+    int assignmentId;
+    int userId;
+    std::string text;
+};
+
+struct FileSubmission {
+    int id;
+    int submissionId;
+    std::string link;
 };
 
 struct TokenError {
@@ -125,9 +139,56 @@ namespace soci
             ind = i_ok;
         }
     };
+
+    template<>
+    struct type_conversion<Submission>
+    {
+        typedef values base_type;
+
+        static void from_base(values const& v, indicator /* ind */, Submission& s)
+        {
+            s.id = v.get<int>("id", 0);
+            s.assignmentId = v.get<int>("assignment_id");
+            s.userId = v.get<int>("user_id");
+            s.text = v.get<std::string>("text");
+        }
+
+        static void to_base(const Submission& s, values& v, indicator& ind)
+        {
+            v.set("id", s.id);
+            v.set("assignment_id", s.assignmentId);
+            v.set("user_id", s.userId);
+            v.set("text", s.text);
+            ind = i_ok;
+        }
+    };
+
+    template<>
+    struct type_conversion<FileSubmission>
+    {
+        typedef values base_type;
+
+        static void from_base(values const& v, indicator /* ind */, FileSubmission& fs)
+        {
+            fs.id = v.get<int>("id", 0);
+            fs.submissionId = v.get<int>("submission_id");
+            fs.link = v.get<std::string>("link");
+        }
+
+        static void to_base(const FileSubmission& fs, values& v, indicator& ind)
+        {
+            v.set("id", fs.id);
+            v.set("submission_id", fs.submissionId);
+            v.set("link", fs.link);
+            ind = i_ok;
+        }
+    };
 }
+#pragma endregion
 
 std::variant<TokenError, json> ValidateToken(std::string& token);
+
+#pragma region Assignment Functions
 
 returnType CreateAssignment(CppHttp::Net::Request req);
 
@@ -138,3 +199,11 @@ returnType GetAssignment(CppHttp::Net::Request req);
 returnType EditAssignment(CppHttp::Net::Request req);
 
 returnType DeleteAssignment(CppHttp::Net::Request req);
+
+#pragma endregion
+
+#pragma region Submission Functions
+
+returnType SubmitAssignment(CppHttp::Net::Request req);
+
+#pragma endregion

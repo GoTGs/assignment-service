@@ -44,10 +44,11 @@ std::vector<std::unordered_map<std::u8string, std::u8string>> FormParser::Parse(
 		fields[u8"name"] = name;
 		fields[u8"value"] = value;
 
-		size_t filenamePos = field.find(u8"filename=\"") + 10;
-		size_t filenameEndPos = field.find(u8"\"", filenamePos);
+		size_t filenamePos = field.find(u8"filename=\"");
 
 		if (filenamePos != std::string::npos) {
+			filenamePos += 10;
+			size_t filenameEndPos = field.find(u8"\"", filenamePos);
 			std::u8string filename = field.substr(filenamePos, filenameEndPos - filenamePos);
 
 			fields[u8"filename"] = filename;
