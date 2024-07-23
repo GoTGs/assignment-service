@@ -145,8 +145,13 @@ returnType GetAllAssignments(CppHttp::Net::Request req) {
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
 		soci::rowset<Assignment> rs = (sql->prepare << "SELECT * FROM assignments WHERE classroom_id=:classroom_id", soci::use(req.m_info.parameters["classroom_id"]));
+		soci::rowset<Submission> rs2 = (sql->prepare << "SELECT submissions.* FROM submissions LEFT JOIN assignments ON assignments.id = submissions.assignment_id LEFT JOIN classrooms ON classrooms.id=assignments.classroom_id WHERE submissions.user_id=:user_id AND classrooms.id=:classroom_id", soci::use(id), soci::use(req.m_info.parameters["classroom_id"]));
 
 		for (auto assignment : rs) {
+			auto it = std::find_if(rs2.begin(), rs2.end(), [&assignment](Submission& submission) {
+				return submission.assignmentId == assignment.id;
+			});
+
 			json assignmentJson;
 			assignmentJson["id"] = assignment.id;
 			assignmentJson["title"] = assignment.title;
@@ -154,6 +159,7 @@ returnType GetAllAssignments(CppHttp::Net::Request req) {
 			std::ostringstream oss;
 			oss << std::put_time(&assignment.dueDate, "%d-%m-%Y %H:%M:%S");
 			assignmentJson["dueDate"] = std::move(oss.str());
+			assignmentJson["completed"] = (it != rs2.end());
 
 			response.push_back(assignmentJson);
 		}
