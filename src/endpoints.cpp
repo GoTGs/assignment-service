@@ -186,10 +186,19 @@ returnType GetAllAssignments(CppHttp::Net::Request req) {
 		soci::rowset<Assignment> rs = (sql->prepare << "SELECT * FROM assignments WHERE classroom_id=:classroom_id", soci::use(req.m_info.parameters["classroom_id"]));
 		soci::rowset<Submission> rs2 = (sql->prepare << "SELECT submissions.* FROM submissions LEFT JOIN assignments ON assignments.id = submissions.assignment_id LEFT JOIN classrooms ON classrooms.id=assignments.classroom_id WHERE submissions.user_id=:user_id AND classrooms.id=:classroom_id", soci::use(id), soci::use(req.m_info.parameters["classroom_id"]));
 
-		for (auto assignment : rs) {
-			auto it = std::find_if(rs2.begin(), rs2.end(), [&assignment](Submission& submission) {
-				return submission.assignmentId == assignment.id;
-			});
+		std::vector<Submission> submissions;
+		std::move(rs2.begin(), rs2.end(), std::back_inserter(submissions));
+
+		for (auto& assignment : rs) {
+			auto it = std::find_if(submissions.begin(), submissions.end(), [&assignment](Submission& submission) { return submission.assignmentId == assignment.id; });
+
+			//for (auto& submission : rs2) {
+			//	//std::osyncstream(std::cout) << submission.assignmentId << " " << assignment.id << std::endl;
+			//	if (submission.assignmentId == assignment.id) {
+			//		isCompleted = true;
+			//		break;
+			//	}
+			//}
 
 			json assignmentJson;
 			assignmentJson["id"] = assignment.id;
@@ -198,7 +207,7 @@ returnType GetAllAssignments(CppHttp::Net::Request req) {
 			std::ostringstream oss;
 			oss << std::put_time(&assignment.dueDate, "%d-%m-%Y %H:%M:%S");
 			assignmentJson["dueDate"] = std::move(oss.str());
-			assignmentJson["completed"] = (it != rs2.end());
+			assignmentJson["completed"] = (it != std::end(submissions));
 
 			response.push_back(assignmentJson);
 		}
