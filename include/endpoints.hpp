@@ -15,6 +15,7 @@
 #include <variant>
 #include <cuchar>
 #include "formParser.hpp"
+#include "../include/hash.hpp"
 #include "../include/azure.hpp"
 
 using returnType = std::tuple<CppHttp::Net::ResponseType, std::string, std::optional<std::vector<std::string>>>;
@@ -55,6 +56,12 @@ struct Submission {
 struct FileSubmission {
     int id;
     int submissionId;
+    std::string link;
+};
+
+struct FileAssignment {
+    int id;
+    int assignmentId;
     std::string link;
 };
 
@@ -136,6 +143,27 @@ namespace soci
             v.set("description", a.description);
             v.set("due_date", a.dueDate);
             v.set("classroom_id", a.classroomId);
+            ind = i_ok;
+        }
+    };
+
+    template<>
+    struct type_conversion<FileAssignment>
+    {
+        typedef values base_type;
+
+        static void from_base(values const& v, indicator /* ind */, FileAssignment& fa)
+        {
+            fa.id = v.get<int>("id", 0);
+            fa.assignmentId = v.get<int>("assignment_id");
+            fa.link = v.get<std::string>("link");
+        }
+
+        static void to_base(const FileAssignment& fa, values& v, indicator& ind)
+        {
+            v.set("id", fa.id);
+            v.set("assignment_id", fa.assignmentId);
+            v.set("link", fa.link);
             ind = i_ok;
         }
     };

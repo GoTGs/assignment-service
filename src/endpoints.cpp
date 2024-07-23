@@ -60,22 +60,28 @@ returnType CreateAssignment(CppHttp::Net::Request req) {
 		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a teacher", {} };
 	}
 
-	json body;
-	try {
-		body = json::parse(req.m_info.body);
-	}
-	catch (json::parse_error& e) {
-		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Invalid JSON", {} };
-	}
+	std::vector<std::unordered_map<std::u8string, std::u8string>> formData;
+	formData = FormParser(req).Parse();
 
-	std::string title = body["title"];
+	std::string title = "";
+	std::string description = "";
+	std::string dueDate = "";
+
+	for (auto& entry : formData) {
+		if (entry[u8"name"] == u8"title") {
+			title = std::string(entry[u8"value"].begin(), entry[u8"value"].end());
+		}
+		else if (entry[u8"name"] == u8"description") {
+			description = std::string(entry[u8"value"].begin(), entry[u8"value"].end());
+		}
+		else if (entry[u8"name"] == u8"dueDate") {
+			dueDate = std::string(entry[u8"value"].begin(), entry[u8"value"].end());
+		}
+	}
 
 	if (title.empty()) {
 		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Missing title in request body", {} };
 	}
-
-	std::string description = body["description"];
-	std::string dueDate = body["dueDate"];
 
 	if (dueDate.empty()) {
 		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Missing due date in request body", {} };
@@ -101,14 +107,47 @@ returnType CreateAssignment(CppHttp::Net::Request req) {
 		*sql << "INSERT INTO assignments (title, description, due_date, classroom_id) VALUES (:title, :description, :due_date, :classroom_id) RETURNING *", soci::use(assignment.title), soci::use(assignment.description), soci::use(assignment.dueDate), soci::use(assignment.classroomId), soci::into(assignment);
 	}
 
+	Azure::Storage::Blobs::BlobServiceClient* blobServiceClient = Blobs::GetInstance()->GetClient();
+	Azure::Storage::Blobs::BlobContainerClient containerClient = blobServiceClient->GetBlobContainerClient("assignments");
+
+	std::vector<std::string> fileUrls;
+	std::string text;
+	for (auto& entry : formData) {
+		if (entry[u8"filename"].empty()) {
+			continue;
+		}
+
+		Azure::Storage::Blobs::BlockBlobClient blockBlobClient = containerClient.GetBlockBlobClient(RandomCode(18) + '-' + std::string(entry[u8"filename"].begin(), entry[u8"filename"].end()));
+		uint8_t* data = new uint8_t[entry[u8"value"].size()];
+
+		std::memcpy(data, entry[u8"value"].data(), entry[u8"value"].size());
+
+		blockBlobClient.UploadFrom(data, entry[u8"value"].size());
+
+		fileUrls.push_back(blockBlobClient.GetUrl());
+
+		delete[] data;
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		for (auto& url : fileUrls) {
+			*sql << "INSERT INTO assignment_files (assignment_id, link) VALUES (:assignment_id, :link)", soci::use(assignment.id), soci::use(url);
+		}
+	}
+
 	json response = {
 		{ "id", assignment.id },
 		{ "title", assignment.title },
 		{ "description", assignment.description },
 		{ "dueDate", dueDate },
-		{ "classroomId", assignment.classroomId }
+		{ "classroomId", assignment.classroomId },
+		{ "files", json::array() }
 	};
 
+	for (auto& url : fileUrls) {
+		response["files"].push_back(std::move(url));
+	}
 
 	return { CppHttp::Net::ResponseType::JSON, response.dump(4), {} };
 }
@@ -209,13 +248,17 @@ returnType GetAssignment(CppHttp::Net::Request req) {
 
 	std::vector<Submission> submissions;
 	std::vector<FileSubmission> fileSubmissions;
+	std::vector<FileAssignment> fileAssignments;
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
 		soci::rowset<Submission> rs = (sql->prepare << "SELECT * FROM submissions WHERE assignment_id=:assignment_id AND user_id=:user_id", soci::use(assignment.id), soci::use(id));
 		std::move(rs.begin(), rs.end(), std::back_inserter(submissions));
 
 		soci::rowset<FileSubmission> rs2 = (sql->prepare << "SELECT file_submissions.* FROM file_submissions LEFT JOIN submissions ON file_submissions.submission_id=submissions.id WHERE submissions.assignment_id=:assignment_id AND submissions.user_id=:user_id", soci::use(assignment.id), soci::use(id));
-		std::copy(rs2.begin(), rs2.end(), std::back_inserter(fileSubmissions));
+		std::move(rs2.begin(), rs2.end(), std::back_inserter(fileSubmissions));
+
+		soci::rowset<FileAssignment> rs3 = (sql->prepare << "SELECT * FROM assignment_files WHERE assignment_id=:assignment_id", soci::use(assignment.id));
+		std::move(rs3.begin(), rs3.end(), std::back_inserter(fileAssignments));
 	}
 
 	std::ostringstream oss;
@@ -227,6 +270,7 @@ returnType GetAssignment(CppHttp::Net::Request req) {
 		{ "description", assignment.description },
 		{ "dueDate", std::move(oss.str()) },
 		{ "classroomId", assignment.classroomId },
+		{ "files", json::array() },
 		{ "submissions", json::array() }
 	};
 
@@ -244,6 +288,10 @@ returnType GetAssignment(CppHttp::Net::Request req) {
 		}
 
 		response["submissions"].push_back(submissionJson);
+	}
+
+	for (auto& file : fileAssignments) {
+		response["files"].push_back(file.link);
 	}
 
 	return { CppHttp::Net::ResponseType::JSON, response.dump(4), {} };
@@ -476,7 +524,7 @@ returnType SubmitAssignment(CppHttp::Net::Request req) {
 			continue;
 		}
 
-		Azure::Storage::Blobs::BlockBlobClient blockBlobClient = containerClient.GetBlockBlobClient(std::string(entry[u8"filename"].begin(), entry[u8"filename"].end()));
+		Azure::Storage::Blobs::BlockBlobClient blockBlobClient = containerClient.GetBlockBlobClient(RandomCode(18) + '-' + std::string(entry[u8"filename"].begin(), entry[u8"filename"].end()));
 		uint8_t* data = new uint8_t[entry[u8"value"].size()];
 
 		std::memcpy(data, entry[u8"value"].data(), entry[u8"value"].size());
