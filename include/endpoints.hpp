@@ -65,6 +65,13 @@ struct FileAssignment {
     std::string link;
 };
 
+struct UserSubmissionJoin {
+    int id;
+    std::string firstName;
+    std::string lastName;
+    std::string email;
+};
+
 struct TokenError {
     CppHttp::Net::ResponseType type;
     std::string message;
@@ -211,6 +218,29 @@ namespace soci
             ind = i_ok;
         }
     };
+
+    template<>
+    struct type_conversion<UserSubmissionJoin>
+    {
+        typedef values base_type;
+
+        static void from_base(values const& v, indicator /* ind */, UserSubmissionJoin& usj)
+        {
+            usj.id = v.get<int>("id", 0);
+            usj.firstName = v.get<std::string>("first_name");
+            usj.lastName = v.get<std::string>("last_name");
+            usj.email = v.get<std::string>("email");
+        }
+
+        static void to_base(const UserSubmissionJoin& usj, values& v, indicator& ind)
+        {
+            v.set("id", usj.id);
+            v.set("first_name", usj.firstName);
+            v.set("last_name", usj.lastName);
+            v.set("email", usj.email);
+            ind = i_ok;
+        }
+    };
 }
 #pragma endregion
 
@@ -233,5 +263,9 @@ returnType DeleteAssignment(CppHttp::Net::Request req);
 #pragma region Submission Functions
 
 returnType SubmitAssignment(CppHttp::Net::Request req);
+
+returnType GetAllSubmissions(CppHttp::Net::Request req);
+
+returnType DeleteSubmission(CppHttp::Net::Request req);
 
 #pragma endregion

@@ -524,6 +524,12 @@ returnType SubmitAssignment(CppHttp::Net::Request req) {
 		}
 	}
 
+	// check if date is past due
+	std::time_t now = std::time(nullptr);
+	if (std::mktime(&assignment.dueDate) < now) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Assignment is past due", {} };
+	}
+
 	std::vector<std::unordered_map<std::u8string, std::u8string>> formData;
 	formData = FormParser(req).Parse();
 
@@ -563,6 +569,12 @@ returnType SubmitAssignment(CppHttp::Net::Request req) {
 	submission.text = std::move(text);
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM submissions WHERE assignment_id=:assignment_id AND user_id=:user_id", soci::use(assignmentId), soci::use(id);
+
+		if (sql->got_data()) {
+			return { CppHttp::Net::ResponseType::BAD_REQUEST, "Submission already exists", {} };
+		}
+
 		*sql << "INSERT INTO submissions (assignment_id, user_id, text) VALUES (:assignment_id, :user_id, :text) RETURNING *", soci::use(submission.assignmentId), soci::use(submission.userId), soci::use(submission.text), soci::into(submission);
 		for (auto& url : fileUrls) {
 			*sql << "INSERT INTO file_submissions (submission_id, link) VALUES (:submission_id, :link)", soci::use(submission.id), soci::use(url);
@@ -582,6 +594,142 @@ returnType SubmitAssignment(CppHttp::Net::Request req) {
 	}
 
 	return { CppHttp::Net::ResponseType::JSON, response.dump(4), {} };
+}
+
+returnType GetAllSubmissions(CppHttp::Net::Request req) {
+	if (req.m_info.parameters["assignment_id"].empty()) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Missing assignment_id in path parameters", {} };
+	}
+
+	soci::session* sql = Database::GetInstance()->GetSession();
+	std::string token = req.m_info.headers["Authorization"];
+
+	auto tokenResult = ValidateToken(token);
+
+	if (std::holds_alternative<TokenError>(tokenResult)) {
+		auto error = std::get<TokenError>(tokenResult);
+		return { error.type, error.message, {} };
+	}
+
+	auto tokenJson = std::get<json>(tokenResult);
+	std::string id = tokenJson["id"];
+
+	User user;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT classroom_users.* FROM classroom_users LEFT JOIN assignments ON assignments.classroom_id=classroom_users.classroom_id WHERE assignments.id=:assignment_id AND classroom_users.user_id=:user_id", soci::use(req.m_info.parameters["assignment_id"]), soci::use(id);
+		
+		if (!sql->got_data()) {
+			return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
+		}
+		*sql << "SELECT * FROM users WHERE id=:user_id", soci::use(id), soci::into(user);
+		if (user.email.empty()) {
+			return { CppHttp::Net::ResponseType::NOT_AUTHORIZED, "Not authorized", {} };
+		}
+	}
+
+	std::transform(user.role.begin(), user.role.end(), user.role.begin(), ::toupper);
+
+	if (user.role != "TEACHER" && user.role != "ADMIN") {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a teacher", {} };
+	}
+
+	Assignment assignment;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM assignments WHERE id=:id", soci::use(req.m_info.parameters["assignment_id"]), soci::into(assignment);
+	}
+
+	if (assignment.title.empty()) {
+		return { CppHttp::Net::ResponseType::NOT_FOUND, "Assignment not found", {} };
+	}
+
+	std::vector<UserSubmissionJoin> submissions;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		soci::rowset<UserSubmissionJoin> rs = (sql->prepare << "SELECT users.first_name, users.last_name, users.email, submissions.id FROM users LEFT JOIN submissions ON submissions.user_id=users.id LEFT JOIN assignments ON assignments.id=submissions.assignment_id WHERE assignments.id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
+		std::move(rs.begin(), rs.end(), std::back_inserter(submissions));
+	}
+
+	json response = json::array();
+
+	for (auto& submission : submissions) {
+		json submissionJson = {
+			{ "submissionId", submission.id },
+			{ "firstName", submission.firstName },
+			{ "lastName", submission.lastName },
+			{ "email", submission.email }
+		};
+
+		response.push_back(submissionJson);
+	}
+
+	return { CppHttp::Net::ResponseType::JSON, response.dump(4), {}};
+}
+
+returnType DeleteSubmission(CppHttp::Net::Request req) {
+	if (req.m_info.parameters["submission_id"].empty()) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Missing submission_id in path parameters", {} };
+	}
+
+	soci::session* sql = Database::GetInstance()->GetSession();
+	std::string token = req.m_info.headers["Authorization"];
+
+	auto tokenResult = ValidateToken(token);
+
+	if (std::holds_alternative<TokenError>(tokenResult)) {
+		auto error = std::get<TokenError>(tokenResult);
+		return { error.type, error.message, {} };
+	}
+
+	auto tokenJson = std::get<json>(tokenResult);
+	std::string id = tokenJson["id"];
+
+	User user;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM users WHERE id=:user_id", soci::use(id), soci::into(user);
+	}
+
+	if (user.email.empty()) {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
+	}
+
+	Submission submission;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM submissions WHERE id=:id", soci::use(req.m_info.parameters["submission_id"]), soci::into(submission);
+
+		if (submission.text.empty()) {
+			return { CppHttp::Net::ResponseType::NOT_FOUND, "Submission not found", {} };
+		}
+
+		*sql << "SELECT classroom_users.* FROM classroom_users LEFT JOIN assignments ON assignments.classroom_id=classroom_users.classroom_id LEFT JOIN submissions ON assignments.id=submissions.assignment_id WHERE submissions.id=:submission_id AND classroom_users.user_id=:user_id", soci::use(req.m_info.parameters["submission_id"]), soci::use(id);
+
+		if (!sql->got_data()) {
+			return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
+		}
+	}
+
+	// check if date is past due
+	Assignment assignment;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM assignments WHERE id=:id", soci::use(submission.assignmentId), soci::into(assignment);
+	}
+
+	std::time_t now = std::time(nullptr);
+
+	if (std::mktime(&assignment.dueDate) < now) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Assignment is past due", {} };
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "DELETE FROM submissions WHERE id=:id", soci::use(req.m_info.parameters["submission_id"]);
+	}
+
+	return { CppHttp::Net::ResponseType::OK, "Submission deleted", {} };
 }
 
 #pragma endregion

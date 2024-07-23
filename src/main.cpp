@@ -22,6 +22,8 @@ int main() {
 	router.AddRoute("PUT", "/assignment/{assignment_id}/edit", EditAssignment);
 	router.AddRoute("DELETE", "/assignment/{assignment_id}/delete", DeleteAssignment);
 	router.AddRoute("POST", "/assignment/{assignment_id}/submit", SubmitAssignment);
+	router.AddRoute("DELETE", "/submission/{submission_id}/delete", DeleteSubmission);
+	router.AddRoute("GET", "/assignment/{assignment_id}/submission/get/all", GetAllSubmissions);
 
 	server.Listen("0.0.0.0", 8003, std::thread::hardware_concurrency());
 
