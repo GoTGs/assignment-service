@@ -70,6 +70,15 @@ struct UserSubmissionJoin {
     std::string firstName;
     std::string lastName;
     std::string email;
+    int userId;
+};
+
+struct Grade {
+    int id;
+    int assignmentId;
+    int userId;
+    double grade;
+    std::string feedback;
 };
 
 struct TokenError {
@@ -230,6 +239,7 @@ namespace soci
             usj.firstName = v.get<std::string>("first_name");
             usj.lastName = v.get<std::string>("last_name");
             usj.email = v.get<std::string>("email");
+            usj.userId = v.get<int>("user_id");
         }
 
         static void to_base(const UserSubmissionJoin& usj, values& v, indicator& ind)
@@ -238,6 +248,32 @@ namespace soci
             v.set("first_name", usj.firstName);
             v.set("last_name", usj.lastName);
             v.set("email", usj.email);
+            v.set("user_id", usj.userId);
+            ind = i_ok;
+        }
+    };
+
+    template<>
+    struct type_conversion<Grade>
+    {
+        typedef values base_type;
+
+        static void from_base(values const& v, indicator /* ind */, Grade& g)
+        {
+            g.id = v.get<int>("id", 0);
+            g.assignmentId = v.get<int>("assignment_id");
+            g.userId = v.get<int>("user_id");
+            g.grade = v.get<double>("grade");
+            g.feedback = v.get<std::string>("feedback");
+        }
+
+        static void to_base(const Grade& g, values& v, indicator& ind)
+        {
+            v.set("id", g.id);
+            v.set("assignment_id", g.assignmentId);
+            v.set("user_id", g.userId);
+            v.set("grade", g.grade);
+            v.set("feedback", g.feedback);
             ind = i_ok;
         }
     };
@@ -267,5 +303,15 @@ returnType SubmitAssignment(CppHttp::Net::Request req);
 returnType GetAllSubmissions(CppHttp::Net::Request req);
 
 returnType DeleteSubmission(CppHttp::Net::Request req);
+
+#pragma endregion
+
+#pragma region Grade Functions
+
+returnType GradeAssignment(CppHttp::Net::Request req);
+
+returnType RemoveGrade(CppHttp::Net::Request req);
+
+returnType EditGrade(CppHttp::Net::Request req);
 
 #pragma endregion

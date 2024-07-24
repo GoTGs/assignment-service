@@ -193,20 +193,16 @@ returnType GetAllAssignments(CppHttp::Net::Request req) {
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
 		soci::rowset<Assignment> rs = (sql->prepare << "SELECT * FROM assignments WHERE classroom_id=:classroom_id", soci::use(req.m_info.parameters["classroom_id"]));
 		soci::rowset<Submission> rs2 = (sql->prepare << "SELECT submissions.* FROM submissions LEFT JOIN assignments ON assignments.id = submissions.assignment_id LEFT JOIN classrooms ON classrooms.id=assignments.classroom_id WHERE submissions.user_id=:user_id AND classrooms.id=:classroom_id", soci::use(id), soci::use(req.m_info.parameters["classroom_id"]));
+		soci::rowset<Grade> rs3 = (sql->prepare << "SELECT * FROM assignment_grades WHERE user_id=:user_id", soci::use(id));
 
 		std::vector<Submission> submissions;
 		std::move(rs2.begin(), rs2.end(), std::back_inserter(submissions));
+		std::vector<Grade> grades;
+		std::move(rs3.begin(), rs3.end(), std::back_inserter(grades));
 
 		for (auto& assignment : rs) {
-			auto it = std::find_if(submissions.begin(), submissions.end(), [&assignment](Submission& submission) { return submission.assignmentId == assignment.id; });
-
-			//for (auto& submission : rs2) {
-			//	//std::osyncstream(std::cout) << submission.assignmentId << " " << assignment.id << std::endl;
-			//	if (submission.assignmentId == assignment.id) {
-			//		isCompleted = true;
-			//		break;
-			//	}
-			//}
+			auto submissionIt = std::find_if(submissions.begin(), submissions.end(), [&assignment](Submission& submission) { return submission.assignmentId == assignment.id; });
+			auto gradeIt = std::find_if(grades.begin(), grades.end(), [&assignment](Grade& grade) { return assignment.id == grade.assignmentId; });
 
 			json assignmentJson;
 			assignmentJson["id"] = assignment.id;
@@ -215,7 +211,15 @@ returnType GetAllAssignments(CppHttp::Net::Request req) {
 			std::ostringstream oss;
 			oss << std::put_time(&assignment.dueDate, "%d-%m-%Y %H:%M:%S");
 			assignmentJson["dueDate"] = std::move(oss.str());
-			assignmentJson["completed"] = (it != std::end(submissions));
+			assignmentJson["completed"] = (submissionIt != std::end(submissions));
+
+			if (gradeIt != std::end(grades)) {
+				assignmentJson["grade"] = {
+					{ "id", gradeIt->id },
+					{ "grade", gradeIt->grade },
+					{ "feedback", gradeIt->feedback }
+				};
+			}
 
 			response.push_back(assignmentJson);
 		}
@@ -281,6 +285,12 @@ returnType GetAssignment(CppHttp::Net::Request req) {
 	std::ostringstream oss;
 	oss << std::put_time(&assignment.dueDate, "%d-%m-%Y %H:%M:%S");
 	
+	Grade grade;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM assignment_grades WHERE assignment_id=:assignment_id AND user_id=:user_id", soci::use(assignment.id), soci::use(id), soci::into(grade);
+	}
+
 	json response = {
 		{ "id", assignment.id },
 		{ "title", assignment.title },
@@ -290,6 +300,14 @@ returnType GetAssignment(CppHttp::Net::Request req) {
 		{ "files", json::array() },
 		{ "submissions", json::array() }
 	};
+
+	if (grade.id != 0) {
+		response["grade"] = {
+			{ "id", grade.id },
+			{ "grade", grade.grade },
+			{ "feedback", grade.feedback }
+		};
+	}
 
 	for (auto& submission : submissions) {
 		json submissionJson = {
@@ -666,12 +684,6 @@ returnType SubmitAssignment(CppHttp::Net::Request req) {
 	submission.text = std::move(text);
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
-		*sql << "SELECT * FROM submissions WHERE assignment_id=:assignment_id AND user_id=:user_id", soci::use(assignmentId), soci::use(id);
-
-		if (sql->got_data()) {
-			return { CppHttp::Net::ResponseType::BAD_REQUEST, "Submission already exists", {} };
-		}
-
 		*sql << "INSERT INTO submissions (assignment_id, user_id, text) VALUES (:assignment_id, :user_id, :text) RETURNING *", soci::use(submission.assignmentId), soci::use(submission.userId), soci::use(submission.text), soci::into(submission);
 		for (auto& url : fileUrls) {
 			*sql << "INSERT INTO file_submissions (submission_id, link) VALUES (:submission_id, :link)", soci::use(submission.id), soci::use(url);
@@ -744,8 +756,15 @@ returnType GetAllSubmissions(CppHttp::Net::Request req) {
 	std::vector<UserSubmissionJoin> submissions;
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
-		soci::rowset<UserSubmissionJoin> rs = (sql->prepare << "SELECT users.first_name, users.last_name, users.email, submissions.id FROM users LEFT JOIN submissions ON submissions.user_id=users.id LEFT JOIN assignments ON assignments.id=submissions.assignment_id WHERE assignments.id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
+		soci::rowset<UserSubmissionJoin> rs = (sql->prepare << "SELECT users.first_name, users.last_name, users.email, submissions.id, submissions.user_id FROM users LEFT JOIN submissions ON submissions.user_id=users.id LEFT JOIN assignments ON assignments.id=submissions.assignment_id WHERE assignments.id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
 		std::move(rs.begin(), rs.end(), std::back_inserter(submissions));
+	}
+
+	std::vector<Grade> grades;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		soci::rowset<Grade> rs = (sql->prepare << "SELECT * FROM assignment_grades WHERE assignment_id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
+		std::move(rs.begin(), rs.end(), std::back_inserter(grades));
 	}
 
 	json response = json::array();
@@ -757,6 +776,15 @@ returnType GetAllSubmissions(CppHttp::Net::Request req) {
 			{ "lastName", submission.lastName },
 			{ "email", submission.email }
 		};
+
+		auto gradeIt = std::find_if(grades.begin(), grades.end(), [&submission](Grade& grade) { return grade.userId == submission.userId; });
+		if (gradeIt != std::end(grades)) {
+			submissionJson["grade"] = {
+				{ "id", gradeIt->id },
+				{ "grade", gradeIt->grade },
+				{ "feedback", gradeIt->feedback }
+			};
+		}
 
 		response.push_back(submissionJson);
 	}
@@ -827,6 +855,239 @@ returnType DeleteSubmission(CppHttp::Net::Request req) {
 	}
 
 	return { CppHttp::Net::ResponseType::OK, "Submission deleted", {} };
+}
+
+#pragma endregion
+
+#pragma region Grade Functions
+
+returnType GradeAssignment(CppHttp::Net::Request req) {
+	if (req.m_info.parameters["assignment_id"].empty()) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Missing assignment_id in path parameters", {} };
+	}
+	if (req.m_info.parameters["user_id"].empty()) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Missing user_id in path parameters", {} };
+	}
+
+	soci::session* sql = Database::GetInstance()->GetSession();
+	std::string token = req.m_info.headers["Authorization"];
+
+	auto tokenResult = ValidateToken(token);
+
+	if (std::holds_alternative<TokenError>(tokenResult)) {
+		auto error = std::get<TokenError>(tokenResult);
+		return { error.type, error.message, {} };
+	}
+
+	auto tokenJson = std::get<json>(tokenResult);
+	std::string id = tokenJson["id"];
+
+	User user;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM users WHERE id=:user_id", soci::use(id), soci::into(user);
+	}
+
+	if (user.email.empty()) {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
+	}
+
+	std::transform(user.role.begin(), user.role.end(), user.role.begin(), ::toupper);
+
+	if (user.role != "TEACHER" && user.role != "ADMIN") {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a teacher", {} };
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT classroom_users.* FROM classroom_users LEFT JOIN assignments ON classroom_users.classroom_id=assignments.classroom_id WHERE assignments.id=:assignment_id AND classroom_users.user_id=:user_id", soci::use(req.m_info.parameters["assignment_id"]), soci::use(req.m_info.parameters["user_id"]);
+
+		if (!sql->got_data()) {
+			return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
+		}
+	}
+
+	json body;
+	try {
+		body = json::parse(req.m_info.body);
+	}
+	catch (json::parse_error& e) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Invalid JSON", {} };
+	}
+
+	if (!body["grade"].is_number()) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Grade must be a percentage", {} };
+	}
+	
+	double grade = body["grade"];
+	std::string feedback = body["feedback"];
+
+	if (grade < 0 || grade > 100) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Grade must be a percentage", {} };
+	}
+
+	Assignment assignment;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM assignments WHERE id=:id", soci::use(req.m_info.parameters["assignment_id"]), soci::into(assignment);
+
+		if (assignment.title.empty()) {
+			return { CppHttp::Net::ResponseType::NOT_FOUND, "Assignment not found", {} };
+		}
+	}
+
+	Grade assignmentGrade;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM assignment_grades WHERE user_id=:user_id AND assignment_id=:assignment_id", soci::use(req.m_info.parameters["user_id"]), soci::use(req.m_info.parameters["assignment_id"]);
+
+		if (sql->got_data()) {
+			return { CppHttp::Net::ResponseType::BAD_REQUEST, "Assignment already graded", {} };
+		}
+
+		*sql << "INSERT INTO assignment_grades(user_id, assignment_id, grade, feedback) VALUES (:user_id, :assignment_id, :grade, :feedback) RETURNING *", soci::use(req.m_info.parameters["user_id"]), soci::use(req.m_info.parameters["assignment_id"]), soci::use(grade), soci::use(feedback), soci::into(assignmentGrade);
+	}
+
+	json response = {
+		{ "id", assignmentGrade.id },
+		{ "userId", assignmentGrade.userId },
+		{ "assignmentId", assignmentGrade.assignmentId },
+		{ "grade", assignmentGrade.grade },
+		{ "feedback", assignmentGrade.feedback }
+	};
+
+	return { CppHttp::Net::ResponseType::JSON, response.dump(4), {} };
+}
+
+returnType RemoveGrade(CppHttp::Net::Request req) {
+	if (req.m_info.parameters["grade_id"].empty()) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Missing grade_id in path parameters", {} };
+	}
+
+	soci::session* sql = Database::GetInstance()->GetSession();
+	std::string token = req.m_info.headers["Authorization"];
+
+	auto tokenResult = ValidateToken(token);
+
+	if (std::holds_alternative<TokenError>(tokenResult)) {
+		auto error = std::get<TokenError>(tokenResult);
+		return { error.type, error.message, {} };
+	}
+
+	auto tokenJson = std::get<json>(tokenResult);
+	std::string id = tokenJson["id"];
+
+	User user;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM users WHERE id=:user_id", soci::use(id), soci::into(user);
+	}
+
+	if (user.email.empty()) {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
+	}
+
+	std::transform(user.role.begin(), user.role.end(), user.role.begin(), ::toupper);
+
+	if (user.role != "TEACHER" && user.role != "ADMIN") {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a teacher", {} };
+	}
+
+	Grade grade;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM assignment_grades WHERE id=:id", soci::use(req.m_info.parameters["grade_id"]), soci::into(grade);
+
+		if (grade.id == 0) {
+			return { CppHttp::Net::ResponseType::NOT_FOUND, "Grade not found", {} };
+		}
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "DELETE FROM assignment_grades WHERE id=:id", soci::use(req.m_info.parameters["grade_id"]);
+	}
+
+	return { CppHttp::Net::ResponseType::OK, "Grade removed", {} };
+}
+
+returnType EditGrade(CppHttp::Net::Request req) {
+	if (req.m_info.parameters["grade_id"].empty()) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Missing grade_id in path parameters", {} };
+	}
+
+	soci::session* sql = Database::GetInstance()->GetSession();
+	std::string token = req.m_info.headers["Authorization"];
+
+	auto tokenResult = ValidateToken(token);
+
+	if (std::holds_alternative<TokenError>(tokenResult)) {
+		auto error = std::get<TokenError>(tokenResult);
+		return { error.type, error.message, {} };
+	}
+
+	auto tokenJson = std::get<json>(tokenResult);
+	std::string id = tokenJson["id"];
+
+	User user;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM users WHERE id=:user_id", soci::use(id), soci::into(user);
+	}
+
+	if (user.email.empty()) {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a member of this classroom", {} };
+	}
+
+	std::transform(user.role.begin(), user.role.end(), user.role.begin(), ::toupper);
+
+	if (user.role != "TEACHER" && user.role != "ADMIN") {
+		return { CppHttp::Net::ResponseType::FORBIDDEN, "User is not a teacher", {} };
+	}
+
+	Grade grade;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "SELECT * FROM assignment_grades WHERE id=:id", soci::use(req.m_info.parameters["grade_id"]), soci::into(grade);
+
+		if (grade.id == 0) {
+			return { CppHttp::Net::ResponseType::NOT_FOUND, "Grade not found", {} };
+		}
+	}
+
+	json body;
+	try {
+		body = json::parse(req.m_info.body);
+	}
+	catch (json::parse_error& e) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Invalid JSON", {} };
+	}
+
+	if (!body["grade"].is_number()) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Grade must be a percentage", {} };
+	}
+
+	double newGrade = body["grade"];
+	std::string feedback = body["feedback"];
+
+	if (newGrade < 0 || newGrade > 100) {
+		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Grade must be a percentage", {} };
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		*sql << "UPDATE assignment_grades SET grade=:grade, feedback=:feedback WHERE id=:id RETURNING *", soci::use(newGrade), soci::use(feedback), soci::use(req.m_info.parameters["grade_id"]), soci::into(grade);
+	}
+
+	json response = {
+		{ "id", grade.id },
+		{ "userId", grade.userId },
+		{ "assignmentId", grade.assignmentId },
+		{ "grade", grade.grade },
+		{ "feedback", grade.feedback }
+	};
+
+	return { CppHttp::Net::ResponseType::JSON, response.dump(4), {} };
 }
 
 #pragma endregion
