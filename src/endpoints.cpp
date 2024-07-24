@@ -364,17 +364,35 @@ returnType EditAssignment(CppHttp::Net::Request req) {
 		}
 	}
 
-	json body;
-	try {
-		body = json::parse(req.m_info.body);
-	}
-	catch (json::parse_error& e) {
-		return { CppHttp::Net::ResponseType::BAD_REQUEST, "Invalid JSON", {} };
+	std::vector<FileAssignment> files;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		soci::rowset<FileAssignment> rs = (sql->prepare << "SELECT * FROM assignment_files WHERE assignment_id=:assignment_id", soci::use(assignment.id));
+		std::move(rs.begin(), rs.end(), std::back_inserter(files));
 	}
 
-	std::string title = body["title"];
-	std::string description = body["description"];
-	std::string dueDate = body["due_date"];
+	std::vector<std::unordered_map<std::u8string, std::u8string>> formData;
+	formData = FormParser(req).Parse();
+
+	std::string title = "";
+	std::string description = "";
+	std::string dueDate = "";
+	std::string links = "";
+
+	for (auto& entry : formData) {
+		if (entry[u8"name"] == u8"title") {
+			title = std::string(entry[u8"value"].begin(), entry[u8"value"].end());
+		}
+		else if (entry[u8"name"] == u8"description") {
+			description = std::string(entry[u8"value"].begin(), entry[u8"value"].end());
+		}
+		else if (entry[u8"name"] == u8"dueDate") {
+			dueDate = std::string(entry[u8"value"].begin(), entry[u8"value"].end());
+		}
+		else if (entry[u8"name"] == u8"links") {
+			links = std::string(entry[u8"value"].begin(), entry[u8"value"].end());
+		}
+	}
 
 	if (!title.empty()) {
 		if (title.size() > 120) {
@@ -401,6 +419,67 @@ returnType EditAssignment(CppHttp::Net::Request req) {
 		assignment.dueDate = std::move(dueDateTm);
 	}
 
+	Azure::Storage::Blobs::BlobServiceClient* blobServiceClient = Blobs::GetInstance()->GetClient();
+	Azure::Storage::Blobs::BlobContainerClient containerClient = blobServiceClient->GetBlobContainerClient("assignments");
+	if (!links.empty()) {
+		std::vector<std::string> fileLinks = CppHttp::Utils::Split(links, '\n');
+
+		// find deleted files
+		std::vector<FileAssignment> deletedFiles;
+		
+		for (auto& file : files) {
+			auto it = std::find_if(fileLinks.begin(), fileLinks.end(), [&file](std::string& link) { return link == file.link; });
+
+			if (it == std::end(fileLinks)) {
+				deletedFiles.push_back(file);
+				files.erase(std::remove_if(files.begin(), files.end(), [&file](FileAssignment& f) { return f.link == file.link; }), files.end());
+			}
+		}
+
+		// remove deleted files from database
+		{
+			std::lock_guard<std::mutex> lock(Database::dbMutex);
+			for (auto& file : deletedFiles) {
+				*sql << "DELETE FROM assignment_files WHERE id=:id", soci::use(file.id);
+			}
+		}
+			
+		for (auto& file : deletedFiles) {
+			auto toDelete = CppHttp::Utils::Split(file.link, '/');
+			Azure::Storage::Blobs::BlockBlobClient blockBlobClient = containerClient.GetBlockBlobClient(toDelete[toDelete.size() - 1]);
+			blockBlobClient.DeleteIfExists();
+		}
+	}
+
+	std::vector<std::string> fileUrls;
+	for (auto& entry : formData) {
+		if (entry[u8"filename"].empty()) {
+			continue;
+		}
+
+		Azure::Storage::Blobs::BlockBlobClient blockBlobClient = containerClient.GetBlockBlobClient(RandomCode(18) + '-' + std::string(entry[u8"filename"].begin(), entry[u8"filename"].end()));
+		uint8_t* data = new uint8_t[entry[u8"value"].size()];
+
+		std::memcpy(data, entry[u8"value"].data(), entry[u8"value"].size());
+
+		blockBlobClient.UploadFrom(data, entry[u8"value"].size());
+
+		fileUrls.push_back(blockBlobClient.GetUrl());
+
+		delete[] data;
+	}
+
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		for (auto& url : fileUrls) {
+			*sql << "INSERT INTO assignment_files (assignment_id, link) VALUES (:assignment_id, :link)", soci::use(assignment.id), soci::use(url);
+		}
+
+		soci::rowset<FileAssignment> rs = (sql->prepare << "SELECT * FROM assignment_files WHERE assignment_id=:assignment_id", soci::use(assignment.id));
+		files.clear();
+		std::move(rs.begin(), rs.end(), std::back_inserter(files));
+	}
+
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
 		*sql << "UPDATE assignments SET title=:title, description=:description, due_date=:due_date WHERE id=:id RETURNING *", soci::use(assignment.title), soci::use(assignment.description), soci::use(assignment.dueDate), soci::use(req.m_info.parameters["assignment_id"]), soci::into(assignment);
@@ -411,8 +490,13 @@ returnType EditAssignment(CppHttp::Net::Request req) {
 		{ "title", assignment.title },
 		{ "description", assignment.description },
 		{ "dueDate", dueDate },
-		{ "classroomId", assignment.classroomId }
+		{ "classroomId", assignment.classroomId },
+		{ "files", json::array() }
 	};
+
+	for (auto& file : files) {
+		response["files"].push_back(file.link);
+	}
 
 	return { CppHttp::Net::ResponseType::JSON, response.dump(4), {} };
 }
