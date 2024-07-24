@@ -432,7 +432,6 @@ returnType EditAssignment(CppHttp::Net::Request req) {
 
 			if (it == std::end(fileLinks)) {
 				deletedFiles.push_back(file);
-				files.erase(std::remove_if(files.begin(), files.end(), [&file](FileAssignment& f) { return f.link == file.link; }), files.end());
 			}
 		}
 
