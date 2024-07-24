@@ -450,6 +450,20 @@ returnType EditAssignment(CppHttp::Net::Request req) {
 			blockBlobClient.DeleteIfExists();
 		}
 	}
+	else {
+		{
+			std::lock_guard<std::mutex> lock(Database::dbMutex);
+			for (auto& file : files) {
+				*sql << "DELETE FROM assignment_files WHERE id=:id", soci::use(file.id);
+			}
+		}
+
+		for (auto& file : files) {
+			auto toDelete = CppHttp::Utils::Split(file.link, '/');
+			Azure::Storage::Blobs::BlockBlobClient blockBlobClient = containerClient.GetBlockBlobClient(toDelete[toDelete.size() - 1]);
+			blockBlobClient.DeleteIfExists();
+		}
+	}
 
 	std::vector<std::string> fileUrls;
 	for (auto& entry : formData) {
