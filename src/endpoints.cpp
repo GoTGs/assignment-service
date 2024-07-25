@@ -285,10 +285,14 @@ returnType GetAssignment(CppHttp::Net::Request req) {
 	std::ostringstream oss;
 	oss << std::put_time(&assignment.dueDate, "%d-%m-%Y %H:%M:%S");
 	
+	bool hasGrade = false;
 	Grade grade;
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
 		*sql << "SELECT * FROM assignment_grades WHERE assignment_id=:assignment_id AND user_id=:user_id", soci::use(assignment.id), soci::use(id), soci::into(grade);
+		if (sql->got_data()) {
+			hasGrade = true;
+		}
 	}
 
 	json response = {
@@ -301,7 +305,7 @@ returnType GetAssignment(CppHttp::Net::Request req) {
 		{ "submissions", json::array() }
 	};
 
-	if (grade.id != 0) {
+	if (hasGrade) {
 		response["grade"] = {
 			{ "id", grade.id },
 			{ "grade", grade.grade },
@@ -778,7 +782,9 @@ returnType GetAllSubmissions(CppHttp::Net::Request req) {
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
 		soci::rowset<Grade> rs = (sql->prepare << "SELECT * FROM assignment_grades WHERE assignment_id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
-		std::move(rs.begin(), rs.end(), std::back_inserter(grades));
+
+		if (rs.begin() != rs.end())
+			std::move(rs.begin(), rs.end(), std::back_inserter(grades));
 	}
 
 	json response = json::array();
