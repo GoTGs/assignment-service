@@ -785,7 +785,7 @@ returnType GetAllSubmissions(CppHttp::Net::Request req) {
 
 	for (auto& submission : submissionJoins) {
 		json submissionJson = {
-			{ "submissionId", submission.id },
+			{ "userId", submission.userId },
 			{ "firstName", submission.firstName },
 			{ "lastName", submission.lastName },
 			{ "email", submission.email }
