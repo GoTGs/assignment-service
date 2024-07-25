@@ -753,10 +753,24 @@ returnType GetAllSubmissions(CppHttp::Net::Request req) {
 		return { CppHttp::Net::ResponseType::NOT_FOUND, "Assignment not found", {} };
 	}
 
-	std::vector<UserSubmissionJoin> submissions;
+	std::vector<UserSubmissionJoin> submissionJoins;
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
 		soci::rowset<UserSubmissionJoin> rs = (sql->prepare << "SELECT users.first_name, users.last_name, users.email, submissions.id, submissions.user_id FROM users LEFT JOIN submissions ON submissions.user_id=users.id LEFT JOIN assignments ON assignments.id=submissions.assignment_id WHERE assignments.id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
+		std::move(rs.begin(), rs.end(), std::back_inserter(submissionJoins));
+	}
+
+	std::vector<FileSubmission> fileSubmissions;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		soci::rowset<FileSubmission> rs = (sql->prepare << "SELECT file_submissions.* FROM file_submissions LEFT JOIN submissions ON file_submissions.submission_id=submissions.id WHERE submissions.assignment_id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
+		std::move(rs.begin(), rs.end(), std::back_inserter(fileSubmissions));
+	}
+
+	std::vector<Submission> submissions;
+	{
+		std::lock_guard<std::mutex> lock(Database::dbMutex);
+		soci::rowset<Submission> rs = (sql->prepare << "SELECT * FROM submissions WHERE assignment_id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
 		std::move(rs.begin(), rs.end(), std::back_inserter(submissions));
 	}
 
@@ -769,13 +783,34 @@ returnType GetAllSubmissions(CppHttp::Net::Request req) {
 
 	json response = json::array();
 
-	for (auto& submission : submissions) {
+	for (auto& submission : submissionJoins) {
 		json submissionJson = {
 			{ "submissionId", submission.id },
 			{ "firstName", submission.firstName },
 			{ "lastName", submission.lastName },
 			{ "email", submission.email }
 		};
+
+		auto submissionIt = std::find_if(submissions.begin(), submissions.end(), [&submission](Submission& sub) { return sub.id == submission.id; });
+		auto fileSubmissionIt = std::find_if(fileSubmissions.begin(), fileSubmissions.end(), [&submission](FileSubmission& fileSubmission) { return fileSubmission.submissionId == submission.id; });
+
+		if (submissionIt != std::end(submissions)) {
+			submissionJson["submission"] = {};
+			submissionJson["submission"]["id"] = submissionIt->id;
+			submissionJson["submission"]["text"] = submissionIt->text;
+
+			std::ostringstream oss;
+			oss << std::put_time(&submissionIt->submittedAt, "%d-%m-%Y %H:%M:%S");
+
+			submissionJson["submission"]["submission_time"] = std::move(oss.str());
+
+			if (fileSubmissionIt != std::end(fileSubmissions)) {
+				submissionJson["submission"]["files"] = json::array();
+				for (auto& file : fileSubmissions) {
+					submissionJson["submission"]["files"].push_back(file.link);
+				}
+			}
+		}
 
 		auto gradeIt = std::find_if(grades.begin(), grades.end(), [&submission](Grade& grade) { return grade.userId == submission.userId; });
 		if (gradeIt != std::end(grades)) {

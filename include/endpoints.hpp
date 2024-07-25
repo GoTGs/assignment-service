@@ -51,6 +51,7 @@ struct Submission {
     int assignmentId;
     int userId;
     std::string text;
+    std::tm submittedAt;
 };
 
 struct FileSubmission {
@@ -195,6 +196,7 @@ namespace soci
             s.assignmentId = v.get<int>("assignment_id");
             s.userId = v.get<int>("user_id");
             s.text = v.get<std::string>("text");
+            s.submittedAt = v.get<std::tm>("submitted_at");
         }
 
         static void to_base(const Submission& s, values& v, indicator& ind)
@@ -203,6 +205,7 @@ namespace soci
             v.set("assignment_id", s.assignmentId);
             v.set("user_id", s.userId);
             v.set("text", s.text);
+            v.set("submitted_at", s.submittedAt);
             ind = i_ok;
         }
     };
