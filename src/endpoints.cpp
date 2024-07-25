@@ -753,28 +753,28 @@ returnType GetAllSubmissions(CppHttp::Net::Request req) {
 		return { CppHttp::Net::ResponseType::NOT_FOUND, "Assignment not found", {} };
 	}
 
-	std::vector<UserSubmissionJoin> submissionJoins;
+	std::vector<UserSubmissionJoin> submissionJoins = {};
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
 		soci::rowset<UserSubmissionJoin> rs = (sql->prepare << "SELECT users.first_name, users.last_name, users.email, submissions.id, submissions.user_id FROM users LEFT JOIN submissions ON submissions.user_id=users.id LEFT JOIN assignments ON assignments.id=submissions.assignment_id WHERE assignments.id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
 		std::move(rs.begin(), rs.end(), std::back_inserter(submissionJoins));
 	}
 
-	std::vector<FileSubmission> fileSubmissions;
+	std::vector<FileSubmission> fileSubmissions = {};
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
 		soci::rowset<FileSubmission> rs = (sql->prepare << "SELECT file_submissions.* FROM file_submissions LEFT JOIN submissions ON file_submissions.submission_id=submissions.id WHERE submissions.assignment_id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
 		std::move(rs.begin(), rs.end(), std::back_inserter(fileSubmissions));
 	}
 
-	std::vector<Submission> submissions;
+	std::vector<Submission> submissions = {};
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
 		soci::rowset<Submission> rs = (sql->prepare << "SELECT * FROM submissions WHERE assignment_id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
 		std::move(rs.begin(), rs.end(), std::back_inserter(submissions));
 	}
 
-	std::vector<Grade> grades;
+	std::vector<Grade> grades = {};
 	{
 		std::lock_guard<std::mutex> lock(Database::dbMutex);
 		soci::rowset<Grade> rs = (sql->prepare << "SELECT * FROM assignment_grades WHERE assignment_id=:assignment_id", soci::use(req.m_info.parameters["assignment_id"]));
